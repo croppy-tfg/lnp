@@ -12,11 +12,13 @@
 #include <stdbool.h>
 
 #define LNP_COST_INFINITY      0xFF
-#define LNP_BEACON_TIMEOUT_MS  60000UL
-#define LNP_SEQ_RESYNC_MS      (5UL * LNP_BEACON_TIMEOUT_MS) // no route this long -> forget gateway seq (gateway reboot)
-#define LNP_ROUTE_TIMEOUT_MS   600000UL                      // learned downward routes expire after 10 min
+#define LNP_BEACON_TIMEOUT_MS  300000UL
+#define LNP_SEQ_RESYNC_MS      (3UL * LNP_BEACON_TIMEOUT_MS) // no route this long -> forget gateway seq (gateway reboot)
+#define LNP_ROUTE_TIMEOUT_MS   3600000UL                      // learned downward routes expire after 10 min
+#define LNP_DEDUP_TIMEOUT_MS   600000UL
+
 #define LNP_DEFAULT_TTL        8
-#define LNP_MAX_ROUTES         16
+#define LNP_MAX_ROUTES         128
 #define LNP_DEDUP_SIZE         16
 
 typedef struct {
@@ -27,9 +29,10 @@ typedef struct {
 } lnp_route_entry_t;
 
 typedef struct {
-    lna_t   src;
-    uint8_t seq;
-    bool    valid;
+    lna_t    src;
+    uint8_t  seq;
+    uint32_t rx_time_ms;
+    bool     valid;
 } lnp_dedup_entry_t;
 
 typedef struct {
@@ -38,12 +41,13 @@ typedef struct {
 
     // upward route
     lna_t    default_gateway;      // Next hop to gateway (parent)
+    lna_t    gateway_id;
     uint8_t  current_cost;         // Distance to gateway (in hops)
     uint16_t beacon_seq;           // Freshest gateway-originated beacon seq seen
     bool     have_seq;             // false until the first beacon is heard
     uint32_t last_beacon_ms;       // Timestamp for route timeout
     bool     has_route_to_gateway;
-    bool     poison_pending;       // Send one cost=INFINITY beacon so children drop us fast
+    uint8_t  poison_count;         // Send cost=INFINITY beacons so children drop us fast
 
     // downward routes
     lnp_route_entry_t routes[LNP_MAX_ROUTES];
@@ -71,7 +75,7 @@ void lnp_router_seed_gateway_seq(lnp_router_t *router, uint16_t seed);
 /* Call periodically (e.g. every second): expires the route after LNP_BEACON_TIMEOUT_MS. */
 void lnp_router_tick(lnp_router_t *router, uint32_t now_ms);
 
-void lnp_router_handle_beacon(lnp_router_t *router, lna_t sender, uint8_t cost, uint16_t seq, uint32_t now_ms);
+void lnp_router_handle_beacon(lnp_router_t *router, lna_t sender, uint8_t cost, uint16_t seq, lna_t gw_id, uint32_t now_ms);
 
 /* Feed every received (and deserialized) frame here. */
 lnp_action_t lnp_router_route(lnp_router_t *router, lnp_frame_t *frame, uint32_t now_ms);

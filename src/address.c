@@ -10,23 +10,18 @@
 #include "lnp/types.h"
 
 // in-house parser for not depending on standard string libs (like sscanf)
-static bool parse_hex(const char **p, unsigned max_digits, unsigned *out)
-{
-    unsigned value = 0, digits = 0;
-
-    while (digits < max_digits) {
+static bool parse_hex(const char **p, unsigned exact_digits, unsigned *out) {
+    unsigned value = 0;
+    for (unsigned i = 0; i < exact_digits; i++) {
         char c = **p;
         unsigned d;
         if      (c >= '0' && c <= '9') d = (unsigned)(c - '0');
         else if (c >= 'a' && c <= 'f') d = (unsigned)(c - 'a') + 10u;
         else if (c >= 'A' && c <= 'F') d = (unsigned)(c - 'A') + 10u;
-        else break;
+        else return false;
         value = (value << 4) | d;
         (*p)++;
-        digits++;
     }
-
-    if (digits == 0) return false;
     *out = value;
     return true;
 }
@@ -49,11 +44,11 @@ int lna_from_str(const char *in_str, lna_t *out_addr)
 
     lnp_node_type_t type;
     switch (in_str[0]) {
-    case 'g': type = LNP_TYPE_GATEWAY;  break;
-    case 'r': type = LNP_TYPE_ROOT;     break;
-    case 'l': type = LNP_TYPE_LEAF;     break;
-    case '#': type = LNP_TYPE_RESERVED; break;
-    default:  return -1;
+        case 'g': type = LNP_TYPE_GATEWAY;  break;
+        case 'r': type = LNP_TYPE_ROOT;     break;
+        case 'l': type = LNP_TYPE_LEAF;     break;
+        case '#': type = LNP_TYPE_RESERVED; break;
+        default:  return -1;
     }
 
     const char *p = in_str + 1;
@@ -64,6 +59,12 @@ int lna_from_str(const char *in_str, lna_t *out_addr)
     if (*p++ != '.') return -1;
     if (!parse_hex(&p, 1, &node)) return -1;
     if (*p != '\0') return -1;               // no trailing NUL char garbage
+
+    if (type != LNP_TYPE_RESERVED) {
+        if (node == 0x0 || node == 0xF) {
+            return -1;
+        }
+    }
 
     *out_addr = lna_make(type, (uint16_t)zone, (uint8_t)node);
     return 0;

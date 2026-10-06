@@ -73,11 +73,11 @@ bool lnp_frame_deserialize(lnp_frame_t *frame, const uint8_t *buffer, uint16_t b
 {
     // valid ptrs and minimum frame length (header only) check
     if (!frame || !buffer || buffer_size < LNP_HEADER_SIZE) return false;
-
     if ((buffer[0] >> 4) != LNP_VERSION) return false;
 
     uint8_t payload_len = buffer[1];
     if (payload_len > LNP_MAX_PAYLOAD) return false;
+
     if (buffer_size < (uint16_t)(LNP_HEADER_SIZE + payload_len)) return false;
 
     lnp_header_t *h = &frame->header;

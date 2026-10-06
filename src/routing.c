@@ -8,7 +8,7 @@
 #include "lnp/routing.h"
 #include <string.h>
 
-#define LNP_BEACON_LEN 3
+#define LNP_BEACON_LEN 5 // cost (1B) + seq (2B) + gw_id (2B)
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
@@ -31,17 +31,18 @@ static void invalidate_route(lnp_router_t *r)
 {
     r->has_route_to_gateway = false;
     r->current_cost = LNP_COST_INFINITY;
-    r->poison_pending = true;
+    r->poison_count = 3;
 }
 
-static void accept_route(lnp_router_t *r, lna_t parent, uint8_t cost, uint16_t seq, uint32_t now_ms)
+static void accept_route(lnp_router_t *r, lna_t parent, uint8_t cost, uint16_t seq, lna_t gw_id, uint32_t now_ms)
 {
     r->default_gateway = parent;
+    r->gateway_id = gw_id;
     r->current_cost = cost;
     r->beacon_seq = seq;
     r->have_seq = true;
     r->has_route_to_gateway = true;
-    r->poison_pending = false;
+    r->poison_count = 0;
     r->last_beacon_ms = now_ms;
 }
 
@@ -149,10 +150,12 @@ void lnp_router_tick(lnp_router_t *router, uint32_t now_ms)
     }
 }
 
-void lnp_router_handle_beacon(lnp_router_t *router, lna_t sender, uint8_t cost, uint16_t seq, uint32_t now_ms)
+void lnp_router_handle_beacon(lnp_router_t *router, lna_t sender, uint8_t cost, uint16_t seq, lna_t gw_id, uint32_t now_ms)
 {
     if (!router || router->is_gateway) return;
     if (lna_eq(sender, router->self_addr)) return;
+
+    if (lna_type(router->self_addr) == LNP_TYPE_LEAF && lna_type(sender) == LNP_TYPE_LEAF) return;
 
     bool from_parent = router->has_route_to_gateway && lna_eq(sender, router->default_gateway);
 
@@ -170,20 +173,20 @@ void lnp_router_handle_beacon(lnp_router_t *router, lna_t sender, uint8_t cost, 
 
     if (from_parent) {
         // follow the parent even if its cost got worse, but only on fresh info
-        if (newer) accept_route(router, sender, offered, seq, now_ms);
+        if (newer) accept_route(router, sender, offered, seq, gw_id, now_ms);
         return;
     }
 
     if (!router->has_route_to_gateway) {
         // Only a beacon NEWER than the route we lost is trustworthy. Older/equal ones may
         // come from our own children still advertising a path through us -> routing loop.
-        if (newer) accept_route(router, sender, offered, seq, now_ms);
+        if (newer) accept_route(router, sender, offered, seq, gw_id, now_ms);
         return;
     }
 
     // Alive route and a different neighbour: switch only if strictly better
     if ((newer || same) && offered < router->current_cost)
-        accept_route(router, sender, offered, seq, now_ms);
+        accept_route(router, sender, offered, seq, gw_id, now_ms);
 }
 
 static void process_beacon(lnp_router_t *r, const lnp_frame_t *f, uint32_t now_ms)
@@ -193,8 +196,10 @@ static void process_beacon(lnp_router_t *r, const lnp_frame_t *f, uint32_t now_m
 
     uint8_t  cost = f->payload[0];
     uint16_t seq  = (uint16_t)(f->payload[1] | ((uint16_t)f->payload[2] << 8));
+    lna_t gw_id;
+    gw_id.raw = (uint16_t)(f->payload[3]) | ((uint16_t)f->payload[4] << 8);
 
-    lnp_router_handle_beacon(r, f->header.src, cost, seq, now_ms);
+    lnp_router_handle_beacon(r, f->header.src, cost, seq, gw_id, now_ms);
 }
 
 // Decide next_hop for frame->header.dst. Order: learned route > same zone (1 hop) > default gateway
@@ -251,6 +256,8 @@ lnp_action_t lnp_router_route(lnp_router_t *router, lnp_frame_t *frame, uint32_t
     if (lna_eq(h->dst, router->self_addr) || lna_is_broadcast_for_me(h->dst, router->self_addr))
         return LNP_ACTION_CONSUME;
 
+    if (lna_type(router->self_addr) == LNP_TYPE_LEAF) return LNP_ACTION_DROP;
+
     // prevent loops via ttl
     if (h->ttl <= 1) return LNP_ACTION_DROP;
     h->ttl--;
@@ -282,6 +289,8 @@ bool lnp_router_build_beacon(lnp_router_t *router, lnp_frame_t *frame)
 {
     if (!router || !frame) return false;
 
+    if (lna_type(router->self_addr) == LNP_TYPE_LEAF) return false;
+
     uint8_t  cost;
     uint16_t seq;
 
@@ -293,16 +302,20 @@ bool lnp_router_build_beacon(lnp_router_t *router, lnp_frame_t *frame)
     } else if (router->has_route_to_gateway) {
         cost = router->current_cost;
         seq = router->beacon_seq;
-    } else if (router->poison_pending) {
+    } else if (router->poison_count > 0) {
         cost = LNP_COST_INFINITY;           // "I lost my route, don't use me"
         seq = router->beacon_seq;
-        router->poison_pending = false;
+        router->poison_count--;
     } else {
         return false;
     }
 
     lnp_frame_init(frame, LNP_FRAME_BEACON, router->self_addr, lna_broadcast(), 1, (uint8_t)(seq & 0xFFu));
 
-    uint8_t body[LNP_BEACON_LEN] = { cost, (uint8_t)(seq & 0xFFu), (uint8_t)(seq >> 8) };
+    uint8_t body[LNP_BEACON_LEN] = {
+        cost,
+        (uint8_t)(seq & 0xFFu), (uint8_t)(seq >> 8),
+        (uint8_t)(router->gateway_id.raw & 0xFFu), (uint8_t)(router->gateway_id.raw >> 8)
+    };
     return lnp_frame_set_payload(frame, body, sizeof(body));
 }
