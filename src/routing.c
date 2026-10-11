@@ -93,15 +93,22 @@ static void route_learn(lnp_router_t *r, lna_t dst, lna_t via, uint32_t now_ms)
     slot->valid = true;
 }
 
-// returns true if (src,seq) was already seen; otherwise remembers it
-static bool dedup_seen(lnp_router_t *r, lna_t src, uint8_t seq)
+// returns true if (src,seq) was already seen recently; otherwise remembers it.
+// Entries expire so a rebooted node (tx_seq back to 0) isn't taken for a duplicate.
+static bool dedup_seen(lnp_router_t *r, lna_t src, uint8_t seq, uint32_t now_ms)
 {
     for (int i = 0; i < LNP_DEDUP_SIZE; i++) {
-        const lnp_dedup_entry_t *e = &r->dedup[i];
-        if (e->valid && e->seq == seq && lna_eq(e->src, src)) return true;
+        lnp_dedup_entry_t *e = &r->dedup[i];
+        if (!e->valid) continue;
+        if (elapsed_ge(now_ms, e->rx_time_ms, LNP_DEDUP_TIMEOUT_MS)) {
+            e->valid = false;
+            continue;
+        }
+        if (e->seq == seq && lna_eq(e->src, src)) return true;
     }
     r->dedup[r->dedup_head].src = src;
     r->dedup[r->dedup_head].seq = seq;
+    r->dedup[r->dedup_head].rx_time_ms = now_ms;
     r->dedup[r->dedup_head].valid = true;
     r->dedup_head = (uint8_t)((r->dedup_head + 1u) % LNP_DEDUP_SIZE);
     return false;
@@ -125,6 +132,7 @@ void lnp_router_init(lnp_router_t *router, lna_t self_addr)
         router->has_route_to_gateway = true;
         router->have_seq = true;
         router->default_gateway = self_addr;
+        router->gateway_id = self_addr;
     } else {
         router->current_cost = LNP_COST_INFINITY;
     }
@@ -239,6 +247,9 @@ lnp_action_t lnp_router_route(lnp_router_t *router, lnp_frame_t *frame, uint32_t
         return LNP_ACTION_HANDLED;
     }
 
+    // unknown frame types (future versions / corruption) are never forwarded as data
+    if (lnp_frame_type(frame) != LNP_FRAME_DATA) return LNP_ACTION_DROP;
+
     // LoRa is a shared medium: we hear frames meant for other nodes. Not for us -> ignore.
     if (!lna_eq(h->next_hop, router->self_addr) && !lna_is_broadcast_for_me(h->next_hop, router->self_addr))
         return LNP_ACTION_DROP;
@@ -247,7 +258,7 @@ lnp_action_t lnp_router_route(lnp_router_t *router, lnp_frame_t *frame, uint32_t
     if (lna_eq(h->src, router->self_addr)) return LNP_ACTION_DROP;
 
     // duplicates
-    if (dedup_seen(router, h->src, h->seq)) return LNP_ACTION_DROP;
+    if (dedup_seen(router, h->src, h->seq, now_ms)) return LNP_ACTION_DROP;
 
     // learn the reverse path (src is reachable through whoever just transmitted this)
     route_learn(router, h->src, h->prev_hop, now_ms);

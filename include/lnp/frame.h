@@ -13,7 +13,7 @@
 
 /*
  * DUTY CYCLE WARNING (EU868)
- * - Beacon (15B on-air) = ~1.4s TX
+ * - Beacon (17B on-air) = ~1.4s TX
  * - Full frame (255B on-air) = ~8.2s TX
  * Being the 1% duty cycle mandatory, a 255B packet
  * consumes ~13.5m. We need to increase the timer.

@@ -14,8 +14,8 @@
 #define LNP_COST_INFINITY      0xFF
 #define LNP_BEACON_TIMEOUT_MS  300000UL
 #define LNP_SEQ_RESYNC_MS      (3UL * LNP_BEACON_TIMEOUT_MS) // no route this long -> forget gateway seq (gateway reboot)
-#define LNP_ROUTE_TIMEOUT_MS   3600000UL                      // learned downward routes expire after 10 min
-#define LNP_DEDUP_TIMEOUT_MS   600000UL
+#define LNP_ROUTE_TIMEOUT_MS   3600000UL                      // learned downward routes expire after 60 min
+#define LNP_DEDUP_TIMEOUT_MS   600000UL                       // (src, seq) pairs are forgotten after 10 min
 
 #define LNP_DEFAULT_TTL        8
 #define LNP_MAX_ROUTES         128

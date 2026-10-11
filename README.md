@@ -17,12 +17,12 @@ El protocolo **LNP** está diseñado para redes inalámbricas de sensores de baj
 * Versión: 4 bits (actualmente `1`)
 * Tipo: 4 bits
 * Length: 1B
+* TTL: 1B
+* SN: 1B
 * Source address: 2B
 * Destination address: 2B
 * Previous hop: 2B
 * Next hop: 2B
-* TTL: 1B
-* SN: 1B
 
 La cabecera ocupa **12B**, así que en LoRa (255B máximo) quedan **243B** de payload. Los campos de 2B viajan en *little-endian*.
 
@@ -81,23 +81,24 @@ La red es un árbol: todos los nodos buscan un camino hacia el **gateway**.
 
 ### Beacons
 
-El gateway emite beacons periódicos y los nodos con ruta los repiten a sus vecinos. Un beacon es una trama de tipo `1` con destino `#.3FF.F`, TTL 1 y 3B de payload:
+El gateway emite beacons periódicos y los nodos con ruta los repiten a sus vecinos. Un beacon es una trama de tipo `1` con destino `#.3FF.F`, TTL 1 y 5B de payload:
 
 * Coste: 1B, saltos hasta el gateway (`255` = sin ruta)
 * Seq: 2B, lo crea **solo el gateway** y los demás lo repiten tal cual
+* Gateway ID: 2B, dirección del gateway raíz del árbol
 
 Reglas de cada nodo:
 
 * Elige como padre al vecino que le dé un coste **estrictamente menor** (con empate no cambia).
 * Solo acepta información **más nueva** (seq mayor). Así un beacon antiguo nunca crea bucles.
-* Si no oye a su padre en **60 s**, pierde la ruta y avisa una vez con coste `255` para que sus hijos la pierdan también.
+* Si no oye a su padre en **5 min**, pierde la ruta y avisa una vez con coste `255` para que sus hijos la pierdan también.
 
 ### Reenvío
 
 Al recibir una trama, un nodo hace esto en orden:
 
 
-1. Es un beacon → se procesa y no se reenvía.
+1. Es un beacon → se procesa y no se reenvía. Si es de un tipo desconocido → se descarta.
 2. El Next hop no soy yo → se ignora (LoRa es un medio compartido).
 3. Es un duplicado (origen, SN) → se descarta.
 4. Aprende el camino de vuelta: el origen se alcanza por el Previous hop.
@@ -120,10 +121,11 @@ Las rutas hacia los nodos se aprenden al reenviar tráfico (paso 4), así que el
 | Parámetro | Valor |
 |-----------|-------|
 | TTL por defecto | 8     |
-| Timeout de beacon | 60 s  |
-| Caducidad de rutas aprendidas | 10 min |
-| Rutas aprendidas por nodo | 16    |
+| Timeout de beacon | 5 min |
+| Caducidad de rutas aprendidas | 60 min |
+| Rutas aprendidas por nodo | 128   |
 | Caché de duplicados | 16    |
+| Caducidad de duplicados | 10 min |
 
 ## Limitaciones
 
